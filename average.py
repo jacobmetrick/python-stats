@@ -4,6 +4,7 @@ import sys
 import threading
 import linecache
 from optparse import OptionParser
+from datetime import datetime
 
 # A thread to add up the values of all the lines starting at sline
 # and ending at sline+noline, and keep track of the number of lines seen.
@@ -68,7 +69,9 @@ parser.add_option("-t", "--thread", action="store", type="int",
     dest="thread", default=1,
     help="specify how many threads to use", metavar="THREAD")
 
+# parse arguments
 (options, args) = parser.parse_args()
+# create variables
 file_name = options.file
 colno = options.column
 sep = options.seperator
@@ -76,6 +79,9 @@ threads = options.thread
 lines = 0 # stores number of iterations, and therfore lines in file
 total = 0 # total additive value of lines
 total_lock = threading.Lock() # a lock on the above two values
+
+# start timing
+start_time = datetime.now()
 
 # spawn and run threads
 thread_pool = []
@@ -88,8 +94,12 @@ for i in xrange(threads):
 for t in thread_pool:
   t.join()
 
+# end timing
+total_time = datetime.now()-start_time
+
 total_lock.acquire()
-print "total: "+str(total)
-print "lines: "+str(lines)
 print "average: "+str(float(total) / float(lines))
+print "microseconds elapsed: "+str(total_time.microseconds)
+print "lines: "+str(lines)
+print "microseconds per line with "+str(threads)+" threads: "+str(total_time.microseconds / float(lines))
 total_lock.release()
