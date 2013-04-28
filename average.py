@@ -1,59 +1,46 @@
 #!/usr/bin/python
 
 import sys
-import threading
+import multiprocessing
 import linecache
 from optparse import OptionParser
 from datetime import datetime
 
-# A thread to add up the values of all the lines starting at sline
-# and ending at sline+noline, and keep track of the number of lines seen.
-class AverageThread(threading.Thread):
+def AverageProcess(queue, proc_id, total_procs, colno, file_name, sep): 
 
-  def __init__(self, file_name, thread_id, total_threads):
-    threading.Thread.__init__(self)
-    self.file_name = file_name
-    self.thread_id = thread_id # which number thread this is. starts at 0
-    self.total_threads = total_threads # number of total threads that there are.
+  running_total = 0 # running total for this process
+  lines_processed = 0 # number of lines processed by process
 
-  def run(self): 
-    global colno, total_lock, lines, total, sep
+  # take every proc_idth line
+  line = linecache.getline(file_name, proc_id) # initialize the line variable
+  while line != '':
 
-    running_total = 0 # running total for this thread
-    lines_processed = 0 # number of lines processed by thread
+    # get integer from line
+    tok = line.split(sep)
+    if len(tok) < colno:
+      sys.stderr.write("Specified column number does not exist in .csv file.\n")
+      sys.exit(1)
 
-    # take every thread_idth line
-    line = linecache.getline(self.file_name, self.thread_id) # initialize the line variable
-    while line != '':
+    # get integer from line
+    curval = 0
+    if lines_processed == 0:
+      try:
+        curval = float(tok[colno-1])
+      except exceptions.ValueError:
+        sys.stderr.write("Value in column "+colno+", line "+i+
+            " was not integer.\n") 
+    else:
+      curval = int(tok[colno-1])
 
-      # get integer from line
-      tok = line.split(sep)
-      if len(tok) < colno:
-        sys.stderr.write("Specified column number does not exist in .csv file.\n")
-        sys.exit(1)
+    # update running values
+    running_total += curval 
+    lines_processed += 1
+    line = linecache.getline(file_name, proc_id + lines_processed
+        * total_procs) # initialize the line variable
 
-      # get integer from line
-      curval = 0
-      if lines_processed == 0:
-        try:
-          curval = float(tok[colno-1])
-        except exceptions.ValueError:
-          sys.stderr.write("Value in column "+colno+", line "+i+
-              " was not integer.\n") 
-      else:
-        curval = int(tok[colno-1])
-
-      # update running values
-      running_total += curval 
-      lines_processed += 1
-      line = linecache.getline(self.file_name, self.thread_id + lines_processed
-          * self.total_threads) # initialize the line variable
-
-    # thread is done, put results of thread additions together
-    total_lock.acquire()
-    lines += lines_processed
-    total += running_total
-    total_lock.release()
+  # process is done, put results of process additions together
+  queue.put([running_total, lines_processed], True)
+  return
 
 parser = OptionParser(usage="%prog -f FILE -c COLUMNNO [options]")
 parser.add_option("-f", "--file", action="store", type="string",
@@ -65,9 +52,9 @@ parser.add_option("-c", "--column", action="store", type="int",
 parser.add_option("-s", "--seperator", action="store", type="string",
     dest="seperator", default=",",
     help="specify a seperator of the csv", metavar="SEPERATOR")
-parser.add_option("-t", "--thread", action="store", type="int",
-    dest="thread", default=1,
-    help="specify how many threads to use", metavar="THREAD")
+parser.add_option("-p", "--processes", action="store", type="int",
+    dest="process", default=1,
+    help="specify how many procs to use", metavar="PROCESS")
 
 # parse arguments
 (options, args) = parser.parse_args()
@@ -75,31 +62,33 @@ parser.add_option("-t", "--thread", action="store", type="int",
 file_name = options.file
 colno = options.column
 sep = options.seperator
-threads = options.thread
-lines = 0 # stores number of iterations, and therfore lines in file
-total = 0 # total additive value of lines
-total_lock = threading.Lock() # a lock on the above two values
+procs = options.process
+total = 0
+lines = 0
+queue = multiprocessing.Queue()
 
 # start timing
 start_time = datetime.now()
 
-# spawn and run threads
-thread_pool = []
-for i in xrange(threads): 
-  cur_thread = AverageThread(file_name, i+1, threads) 
-  cur_thread.start()
-  thread_pool.append(cur_thread)
+# spawn and run procs
+process_pool = []
+for i in xrange(procs): 
+  cur_proc = multiprocessing.Process(target=AverageProcess, args=(queue, i+1,
+    procs, colno, file_name, sep))
+  cur_proc.start()
+  process_pool.append(cur_proc)
 
-# wait for all threads to finish
-for t in thread_pool:
-  t.join()
+# wait for all procs to finish, removing and adding a value each time
+for p in process_pool:
+  p.join()
+  item = queue.get() # block until we get an item. 
+  total += item[0]
+  lines += item[1]
 
 # end timing
 total_time = datetime.now()-start_time
 
-total_lock.acquire()
 print "average: "+str(float(total) / float(lines))
 print "microseconds elapsed: "+str(total_time.microseconds)
 print "lines: "+str(lines)
-print "microseconds per line with "+str(threads)+" threads: "+str(total_time.microseconds / float(lines))
-total_lock.release()
+print "microseconds per line with "+str(procs)+" procs: "+str(total_time.microseconds / float(lines))
